@@ -31,11 +31,10 @@ def apply_model(state, images, labels):
     loss = jnp.mean(optax.softmax_cross_entropy(logits=logits, labels=one_hot))
     return loss, logits'''
 
-  grad_fn = jax.value_and_grad(loss_fn)
+  grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
   (loss, logits), grads = grad_fn(state.params)
-  #print(len(logits), logits[0], logits[1])
-  #print(logits[1][0].astype(float))
-  accuracy = jnp.mean(jnp.argmax(logits, -1) == labels)
+  #print(logits[0],logits[1])
+  accuracy = jnp.mean(jnp.argmax(logits[1], -1) == labels)
   return grads, loss, accuracy
 
 def train_epoch(state, train_ds, batch_size, rng):

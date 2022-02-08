@@ -13,6 +13,6 @@ def generate_binary_cross_entropy_loss_fn(apply_fn, state, images, labels):
         #variables = make_variables(params, state)
         logits, new_model_state = apply_fn({"params": params}, images, mutable=["batch_stats"])
         loss = binary_cross_entropy_loss_with_logits(logits, labels)
-        return loss, logits
+        return loss, (new_model_state, logits)
 
     return loss_fn  
