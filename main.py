@@ -33,8 +33,10 @@ def apply_model(state, images, labels):
 
   grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
   (loss, logits), grads = grad_fn(state.params)
-  #print(logits[0],logits[1])
-  accuracy = jnp.mean(jnp.argmax(logits[1], -1) == labels)
+  #print(np.ndarray(loss))
+  accuracy = jnp.mean(jnp.greater(logits[1], jnp.zeros(logits[1].shape)) == labels)
+  #print(logits[1][0], list(grads['Dense_2']['kernel']))
+  #print(f"\rLoss: {loss} Acc: {100*accuracy}%", end="")
   return grads, loss, accuracy
 
 def train_epoch(state, train_ds, batch_size, rng):
