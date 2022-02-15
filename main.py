@@ -7,7 +7,7 @@ import tensorflow as tf
 import optax
 from flax.training import train_state
 from flax.training.checkpoints import save_checkpoint
-from utils import ntk_eigenstuff, calculate_ntk_matrix
+from utils import handle_eigendata, calculate_ntk_matrix, timing
 import numpy as np
 
 def binarize_labels(labels, threshold_class):
@@ -31,6 +31,7 @@ def apply_model(state, images, labels):
   accuracy = jnp.mean(jnp.greater(logits, 0.5*jnp.ones(logits.shape)) == labels)
   return grads, loss, accuracy
 
+@timing
 def train_epoch(state, train_ds, batch_size, rng):
   """Train for a single epoch."""
   train_ds_size = len(train_ds['image'])
@@ -65,19 +66,24 @@ def get_datasets(ds_name, root_dir="."):
   test_ds['image'] = jnp.float32(test_ds['image']) / 255.
   return train_ds, test_ds
 
+# Handling arguments
 parser = argparse.ArgumentParser()
 
 parser.add_argument("arch")                     # Architecture: fc, minialex
 parser.add_argument("ds")                       # Dataset 
 parser.add_argument("seed")                     # Random seed (an int)
-parser.add_argument("epochs")
+parser.add_argument("epochs", type=int)
 parser.add_argument("n_ntk_data")
 parser.add_argument("n_eigen")
+parser.add_argument("--bs", type=int, default=32)
 args = parser.parse_args()
 seed = int(args.seed)
 n_ntk_data = int(args.n_ntk_data)
 n_eigen = int(args.n_eigen)
 dataset = args.ds    # 'mnist', 'cifar10', "fashion_mnist"
+batch_size=args.bs
+
+# Setting up model and data
 
 model_key = jax.random.PRNGKey(seed)
 model = model_dict[args.arch](**model_params[args.arch])
@@ -105,23 +111,25 @@ params = model.init(rng, jnp.ones(dataset_dims[dataset]))['params']
 lr=0.001
 tx = optax.sgd(lr, 0.9)
 state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
-
+epoch = 0
 # Calculate Empirical NTK
 ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
 # Calculate Eigenvals and Vectors for NTK Matrix
-e_vals, e_vecs = ntk_eigenstuff(ntk_matrix, top_k_eigen=n_eigen)
 
-total_sum = ntk_matrix.trace()
-val_sum = e_vals.sum()
-ratio = float(val_sum/total_sum)
-print(f"Top {n_eigen} eigenvalues represent: {100*ratio:.2f}%")
+handle_eigendata(ntk_matrix, top_k_eigen=n_eigen, prefix=f"{args.arch}|{dataset}|{epoch}_{seed}")
+# Checkpoint parameters
+save_checkpoint("ckpts",state,"",
+  prefix=f"ckpoint_{args.arch}|{dataset}|{epoch}_{seed}",
+  keep_every_n_steps=1,
+  overwrite=True)
+
 
 print("Starting Training")
 for epoch in range(1, epochs + 1):
     print(f"Epoch {epoch}")
     rng, input_rng = jax.random.split(rng)
     state, train_loss, train_accuracy = train_epoch(state, train_ds,
-                                                    32,
+                                                    batch_size,
                                                     input_rng)
     print(f"Train loss: {train_loss:.2f}, Train Acc: {100*train_accuracy:.2f}%")
     _, test_loss, test_accuracy = apply_model(state, test_ds['image'],
@@ -130,11 +138,10 @@ for epoch in range(1, epochs + 1):
     # Calculate Empirical NTK
     ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
     # Calculate Eigenvals and Vectors for NTK Matrix
-    e_vals, e_vecs = ntk_eigenstuff(ntk_matrix, top_k_eigen=n_eigen)
-
-    total_sum = ntk_matrix.trace()
-    val_sum = e_vals.sum()
-    ratio = float(val_sum/total_sum)
-    print(f"Top {n_eigen} eigenvalues represent: {100*ratio:.2f}%")
-    #save_checkpoint("ckpts",state,epoch, prefix="ckpoint", keep_every_n_steps=1)
-    # Checkpoint model  
+    handle_eigendata(ntk_matrix, top_k_eigen=n_eigen, prefix=f"{args.arch}|{dataset}|{epoch}_{seed}")
+    # Checkpoint parameters
+    save_checkpoint("ckpts",state,"",
+      prefix=f"ckpoint_{args.arch}|{dataset}|{epoch}_{seed}",
+      keep_every_n_steps=1,
+      overwrite=True)
+  
