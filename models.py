@@ -17,6 +17,7 @@ class MLP(nn.Module):
         for feat in self.features[:-1]:
             x = self.activation(nn.Dense(feat)(x))
         x = nn.Dense(self.features[-1])(x)
+        x = nn.sigmoid(x)
         # x = nn.log_softmax(x)
         return x
 
@@ -55,7 +56,8 @@ class LeNet(nn.Module):
             x = self.activation(x)
 
         x = nn.Dense(self.num_classes)(x)
-        # x = nn.log_softmax(x)
+        #x = nn.log_softmax(x)
+        x = nn.sigmoid(x)
         return x
 
 class CNN(nn.Module):
@@ -73,6 +75,7 @@ class CNN(nn.Module):
     x = nn.Dense(features=256)(x)
     x = nn.relu(x)
     x = nn.Dense(features=1)(x)
+    x = nn.sigmoid(x)
     return x
 
 

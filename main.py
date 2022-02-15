@@ -1,14 +1,13 @@
 import jax
 import argparse
-import neural_tangents as nt
 import jax.numpy as jnp
-from models import LeNet, MLP, CNN, model_dict, model_params
+from models import model_dict, model_params
 import tensorflow_datasets as tfds
+import tensorflow as tf
 import optax
 from flax.training import train_state
 from flax.training.checkpoints import save_checkpoint
-from utils import generate_binary_cross_entropy_loss_fn
-
+from utils import ntk_eigenstuff, calculate_ntk_matrix
 import numpy as np
 
 def binarize_labels(labels, threshold_class):
@@ -21,22 +20,15 @@ def update_model(state, grads):
 @jax.jit
 def apply_model(state, images, labels):
   """Computes gradients, loss and accuracy for a single batch."""
-
-  loss_fn  = generate_binary_cross_entropy_loss_fn(model.apply, state, images, labels)
-
-  
-  '''def loss_fn(params):
-    logits = model.apply({'params': params}, images)
-    one_hot = jax.nn.one_hot(labels, 10)
-    loss = jnp.mean(optax.softmax_cross_entropy(logits=logits, labels=one_hot))
-    return loss, logits'''
+  def loss_fn(params):
+        preds = model.apply({'params': params}, images) 
+        preds = preds.squeeze()
+        loss = (- labels * jnp.log(preds+1e-6) - (1 - labels) * jnp.log(1 - preds + 1e-6)).mean()
+        return loss, preds
 
   grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
   (loss, logits), grads = grad_fn(state.params)
-  #print(np.ndarray(loss))
-  accuracy = jnp.mean(jnp.greater(logits[1], jnp.zeros(logits[1].shape)) == labels)
-  #print(logits[1][0], list(grads['Dense_2']['kernel']))
-  #print(f"\rLoss: {loss} Acc: {100*accuracy}%", end="")
+  accuracy = jnp.mean(jnp.greater(logits, 0.5*jnp.ones(logits.shape)) == labels)
   return grads, loss, accuracy
 
 def train_epoch(state, train_ds, batch_size, rng):
@@ -77,46 +69,72 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("arch")                     # Architecture: fc, minialex
 parser.add_argument("ds")                       # Dataset 
-#parser.add_argument("seed")                     # Random seed (an int)
+parser.add_argument("seed")                     # Random seed (an int)
+parser.add_argument("epochs")
+parser.add_argument("n_ntk_data")
+parser.add_argument("n_eigen")
 args = parser.parse_args()
-#seed = int(args.seed)
+seed = int(args.seed)
+n_ntk_data = int(args.n_ntk_data)
+n_eigen = int(args.n_eigen)
+dataset = args.ds    # 'mnist', 'cifar10', "fashion_mnist"
 
-dataset = args.ds    # 'mnist', 'cifar10', 'cifar100'
-
-#ds = 2
-model_key = jax.random.PRNGKey(10)
-#data  = jax.random.normal(model_key, (ds, 28,28,3))
+model_key = jax.random.PRNGKey(seed)
 model = model_dict[args.arch](**model_params[args.arch])
-
+print("Loading datasets...")
 train_ds, test_ds = get_datasets(dataset)
-
+ds, *_ = train_ds['image'].shape
+print("Creating NTK testing dataset...")
+key = jax.random.PRNGKey(128)
+index = jax.random.choice(key, ds, (n_ntk_data,), replace=False) 
+index = list(index)
+ntk_ds = train_ds['image'][index, ...]  
 # Turn dataset into binary version
 train_ds['label'] = binarize_labels(train_ds['label'],4)
 test_ds['label'] = binarize_labels(test_ds['label'],4)
 
-epochs = 5
+epochs = int(args.epochs)
 rng, init_rng = jax.random.split(model_key)
 
-dataset_dims = {'mnist': [1,28,28,1],'cifar10': [1,32,32,3], 'cifar100': [1,32,32,3]}
+dataset_dims = {'mnist': [1,28,28,1],
+                'fashion_mnist': [1,28,28,1],
+                'cifar10': [1,32,32,3]}
 
+# Setup model
 params = model.init(rng, jnp.ones(dataset_dims[dataset]))['params']
 lr=0.001
 tx = optax.sgd(lr, 0.9)
 state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+
+# Calculate Empirical NTK
+ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
+# Calculate Eigenvals and Vectors for NTK Matrix
+e_vals, e_vecs = ntk_eigenstuff(ntk_matrix, top_k_eigen=n_eigen)
+
+total_sum = ntk_matrix.trace()
+val_sum = e_vals.sum()
+ratio = float(val_sum/total_sum)
+print(f"Top {n_eigen} eigenvalues represent: {100*ratio:.2f}%")
 
 print("Starting Training")
 for epoch in range(1, epochs + 1):
     print(f"Epoch {epoch}")
     rng, input_rng = jax.random.split(rng)
     state, train_loss, train_accuracy = train_epoch(state, train_ds,
-                                                    64,
+                                                    32,
                                                     input_rng)
     print(f"Train loss: {train_loss:.2f}, Train Acc: {100*train_accuracy:.2f}%")
     _, test_loss, test_accuracy = apply_model(state, test_ds['image'],
                                               test_ds['label'])
     print(f"Test loss: {test_loss:.2f}, Test Acc: {100*test_accuracy:.2f}%")
+    # Calculate Empirical NTK
+    ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
+    # Calculate Eigenvals and Vectors for NTK Matrix
+    e_vals, e_vecs = ntk_eigenstuff(ntk_matrix, top_k_eigen=n_eigen)
+
+    total_sum = ntk_matrix.trace()
+    val_sum = e_vals.sum()
+    ratio = float(val_sum/total_sum)
+    print(f"Top {n_eigen} eigenvalues represent: {100*ratio:.2f}%")
     #save_checkpoint("ckpts",state,epoch, prefix="ckpoint", keep_every_n_steps=1)
-    # Checkpoint model
-
-
-#print(model.apply(init_vars, data))
+    # Checkpoint model  
