@@ -123,7 +123,6 @@ save_checkpoint("ckpts",state,"",
   keep_every_n_steps=1,
   overwrite=True)
 
-
 print("Starting Training")
 for epoch in range(1, epochs + 1):
     print(f"Epoch {epoch}")
@@ -135,6 +134,11 @@ for epoch in range(1, epochs + 1):
     _, test_loss, test_accuracy = apply_model(state, test_ds['image'],
                                               test_ds['label'])
     print(f"Test loss: {test_loss:.2f}, Test Acc: {100*test_accuracy:.2f}%")
+
+    stats = {"train": {"loss": train_loss, "acc": train_accuracy},
+    "test": {"loss": test_loss, "acc": test_accuracy}}
+
+    jnp.save(f"stats/{args.arch}|{dataset}|{epoch}_{seed}", stats)
     # Calculate Empirical NTK
     ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
     # Calculate Eigenvals and Vectors for NTK Matrix
