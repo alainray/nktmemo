@@ -2,12 +2,11 @@ import jax
 import argparse
 import jax.numpy as jnp
 from models import model_dict, model_params
-import tensorflow_datasets as tfds
 import tensorflow as tf
 import optax
 from flax.training import train_state
 from flax.training.checkpoints import save_checkpoint
-from utils import handle_eigendata, calculate_ntk_matrix, timing
+from utils import timing, get_datasets
 import numpy as np
 
 def binarize_labels(labels, threshold_class):
@@ -56,16 +55,6 @@ def train_epoch(state, train_ds, batch_size, rng):
   return state, train_loss, train_accuracy
 
 
-def get_datasets(ds_name, root_dir="."):
-  """Load MNIST train and test datasets into memory."""
-  ds_builder = tfds.builder(ds_name)
-  ds_builder.download_and_prepare(download_dir=root_dir)
-  train_ds = tfds.as_numpy(ds_builder.as_dataset(split='train', batch_size=-1))
-  test_ds = tfds.as_numpy(ds_builder.as_dataset(split='test', batch_size=-1))
-  train_ds['image'] = jnp.float32(train_ds['image']) / 255.
-  test_ds['image'] = jnp.float32(test_ds['image']) / 255.
-  return train_ds, test_ds
-
 # Handling arguments
 parser = argparse.ArgumentParser()
 
@@ -73,13 +62,9 @@ parser.add_argument("arch")                     # Architecture: fc, minialex
 parser.add_argument("ds")                       # Dataset 
 parser.add_argument("seed")                     # Random seed (an int)
 parser.add_argument("epochs", type=int)
-parser.add_argument("n_ntk_data")
-parser.add_argument("n_eigen")
 parser.add_argument("--bs", type=int, default=32)
 args = parser.parse_args()
 seed = int(args.seed)
-n_ntk_data = int(args.n_ntk_data)
-n_eigen = int(args.n_eigen)
 dataset = args.ds    # 'mnist', 'cifar10', "fashion_mnist"
 batch_size=args.bs
 
@@ -90,11 +75,7 @@ model = model_dict[args.arch](**model_params[args.arch])
 print("Loading datasets...")
 train_ds, test_ds = get_datasets(dataset)
 ds, *_ = train_ds['image'].shape
-print("Creating NTK testing dataset...")
-key = jax.random.PRNGKey(128)
-index = jax.random.choice(key, ds, (n_ntk_data,), replace=False) 
-index = list(index)
-ntk_ds = train_ds['image'][index, ...]  
+  
 # Turn dataset into binary version
 train_ds['label'] = binarize_labels(train_ds['label'],4)
 test_ds['label'] = binarize_labels(test_ds['label'],4)
@@ -112,11 +93,6 @@ lr=0.001
 tx = optax.sgd(lr, 0.9)
 state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 epoch = 0
-# Calculate Empirical NTK
-ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
-# Calculate Eigenvals and Vectors for NTK Matrix
-
-handle_eigendata(ntk_matrix, top_k_eigen=n_eigen, prefix=f"{args.arch}|{dataset}|{epoch}_{seed}")
 # Checkpoint parameters
 save_checkpoint("ckpts",state,"",
   prefix=f"ckpoint_{args.arch}|{dataset}|{epoch}_{seed}",
@@ -125,7 +101,7 @@ save_checkpoint("ckpts",state,"",
 
 print("Starting Training")
 for epoch in range(1, epochs + 1):
-    print(f"Epoch {epoch}")
+    print(f"Epoch {epoch}/{epochs}")
     rng, input_rng = jax.random.split(rng)
     state, train_loss, train_accuracy = train_epoch(state, train_ds,
                                                     batch_size,
@@ -139,11 +115,7 @@ for epoch in range(1, epochs + 1):
     "test": {"loss": test_loss, "acc": test_accuracy}}
 
     jnp.save(f"stats/{args.arch}|{dataset}|{epoch}_{seed}", stats)
-    # Calculate Empirical NTK
-    ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
-    # Calculate Eigenvals and Vectors for NTK Matrix
-    handle_eigendata(ntk_matrix, top_k_eigen=n_eigen, prefix=f"{args.arch}|{dataset}|{epoch}_{seed}")
-    # Checkpoint parameters
+
     save_checkpoint("ckpts",state,"",
       prefix=f"ckpoint_{args.arch}|{dataset}|{epoch}_{seed}",
       keep_every_n_steps=1,

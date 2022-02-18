@@ -6,6 +6,7 @@ from scipy.sparse.linalg import svds
 import neural_tangents as nt
 from functools import wraps
 from time import time
+import tensorflow_datasets as tfds 
 
 def timing(f):
     @wraps(f)
@@ -17,6 +18,15 @@ def timing(f):
         return result
     return wrap
 
+def get_datasets(ds_name, root_dir="."):
+  """Load MNIST train and test datasets into memory."""
+  ds_builder = tfds.builder(ds_name)
+  ds_builder.download_and_prepare(download_dir=root_dir)
+  train_ds = tfds.as_numpy(ds_builder.as_dataset(split='train', batch_size=-1))
+  test_ds = tfds.as_numpy(ds_builder.as_dataset(split='test', batch_size=-1))
+  train_ds['image'] = jnp.float32(train_ds['image']) / 255.
+  test_ds['image'] = jnp.float32(test_ds['image']) / 255.
+  return train_ds, test_ds
 
 def make_variables(params, model_state):
     return freeze({"params": params, **model_state})
@@ -55,3 +65,13 @@ def handle_eigendata(ntk_mat, top_k_eigen=100, save_path="eigen", prefix=""):
     jnp.save(f"{save_path}/trace_{prefix}.npy", total_sum)
 
     print(f"Top {top_k_eigen} eigenvalues represent: {100*ratio:.2f}%")
+
+def extract_experiment_data(filename):
+    filename = filename.replace("ckpoint_","")
+    filename = filename.split("|")
+    dataset = filename[1]
+    arch = filename[0]
+    epoch = int(filename[2].split("_")[0])
+    seed = int(filename[2].split("_")[1])
+
+    return {'dataset': dataset, 'arch': arch, 'epoch': epoch, "seed": seed}
