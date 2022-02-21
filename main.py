@@ -6,6 +6,7 @@ import tensorflow as tf
 import optax
 from flax.training import train_state
 from flax.training.checkpoints import save_checkpoint
+from flax.serialization import to_state_dict
 from utils import timing, get_datasets
 import numpy as np
 
@@ -94,10 +95,7 @@ tx = optax.sgd(lr, 0.9)
 state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 epoch = 0
 # Checkpoint parameters
-save_checkpoint("ckpts",state,"",
-  prefix=f"ckpoint_{args.arch}|{dataset}|{epoch}_{seed}",
-  keep_every_n_steps=1,
-  overwrite=True)
+jnp.save(f"ckpts/ckpoint_{args.arch}|{dataset}|{epoch}_{seed}.npy",to_state_dict(state.params))
 
 print("Starting Training")
 for epoch in range(1, epochs + 1):
@@ -116,8 +114,5 @@ for epoch in range(1, epochs + 1):
 
     jnp.save(f"stats/{args.arch}|{dataset}|{epoch}_{seed}", stats)
 
-    save_checkpoint("ckpts",state,"",
-      prefix=f"ckpoint_{args.arch}|{dataset}|{epoch}_{seed}",
-      keep_every_n_steps=1,
-      overwrite=True)
+    jnp.save(f"ckpts/ckpoint_{args.arch}|{dataset}|{epoch}_{seed}.npy",to_state_dict(state.params))
   

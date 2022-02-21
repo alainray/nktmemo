@@ -1,12 +1,12 @@
 import jax
 import jax.numpy as jnp
-import optax
 from flax.core import freeze
 from scipy.sparse.linalg import svds
 import neural_tangents as nt
 from functools import wraps
 from time import time
-import tensorflow_datasets as tfds 
+import tensorflow_datasets as tfds
+
 
 def timing(f):
     @wraps(f)
@@ -18,6 +18,7 @@ def timing(f):
         return result
     return wrap
 
+
 def get_datasets(ds_name, root_dir="."):
   """Load MNIST train and test datasets into memory."""
   ds_builder = tfds.builder(ds_name)
@@ -28,8 +29,10 @@ def get_datasets(ds_name, root_dir="."):
   test_ds['image'] = jnp.float32(test_ds['image']) / 255.
   return train_ds, test_ds
 
+
 def make_variables(params, model_state):
     return freeze({"params": params, **model_state})
+
 
 
 def ntk_eigenstuff(ntk_mat, top_k_eigen=100):
@@ -43,7 +46,7 @@ def ntk_eigenstuff(ntk_mat, top_k_eigen=100):
     return eigvals, eigvecs
 
 @timing
-def calculate_ntk_matrix(model, data, state, ntk_bs=50):
+def calculate_ntk_matrix(model, data, params, ntk_bs=50):
 
     kernel_fn = nt.batch(
         nt.empirical_kernel_fn(model.apply, vmap_axes=0, implementation=1, trace_axes=()),
@@ -52,7 +55,7 @@ def calculate_ntk_matrix(model, data, state, ntk_bs=50):
         store_on_device=False,
     )
     # This will take a lot of time (data, model and number of samples dependent)...
-    return kernel_fn(data, None, "ntk", freeze({'params': state.params}))
+    return kernel_fn(data, None, "ntk", freeze({'params': params}))
 
 @timing
 def handle_eigendata(ntk_mat, top_k_eigen=100, save_path="eigen", prefix=""):
@@ -68,6 +71,7 @@ def handle_eigendata(ntk_mat, top_k_eigen=100, save_path="eigen", prefix=""):
 
 def extract_experiment_data(filename):
     filename = filename.replace("ckpoint_","")
+    filename = filename.replace(".npy","")
     filename = filename.split("|")
     dataset = filename[1]
     arch = filename[0]

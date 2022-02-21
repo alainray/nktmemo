@@ -11,6 +11,9 @@ import numpy as np
 from os.path import isfile, join
 from os import listdir
 from flax.training.checkpoints import restore_checkpoint
+from flax.core import unfreeze
+from flax.serialization import from_state_dict
+
 @jax.jit
 def update_model(state, grads):
   return state.apply_gradients(grads=grads)
@@ -59,35 +62,39 @@ tx = optax.sgd(lr, 0.9)
 
 files = [f for f in listdir(root) if isfile(join(root, f)) and "ckpoint" in f]
 files.sort()
-
+files = files[::-1]
 ntk_ds = None
 
 for f in files:
 
     # Load checkpoint
     exp = extract_experiment_data(f)
+    filename = f"{exp['arch']}|{exp['dataset']}|{exp['epoch']}_{exp['seed']}_{n_ntk_data}"
 
-    model = model_dict[exp['arch']](**model_params[exp['arch']])
-    # Load checkpoint
-    rng = jax.random.PRNGKey(10) # Doesn't matter
-    params = model.init(rng, jnp.ones(dataset_dims[exp['dataset']]))['params']
-    state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
-    state = restore_checkpoint(f, state, prefix="")
-    # Load dataset
-
-    if ntk_ds is None or exp['dataset'] != current_dataset:
-        current_dataset = exp['dataset']
-        print("Loading datasets...")
-        train_ds, _ = get_datasets(exp['dataset'])
-        ds, *_ = train_ds['image'].shape
-        print("Creating NTK testing dataset...")
-        key = jax.random.PRNGKey(128)
-        index = jax.random.choice(key, ds, (n_ntk_data,), replace=False) 
-        index = list(index)
-        ntk_ds = train_ds['image'][index, ...]  
-    # Calculate Empirical NTK
-    print(f"Calculating NTK for {exp['arch']}-{exp['dataset']} using {n_ntk_data} data points for epoch {exp['epoch']}")
-    ntk_matrix = calculate_ntk_matrix(model, ntk_ds, state)
-    # Calculate Eigenvals and Vectors for NTK Matrix
-    handle_eigendata(ntk_matrix, top_k_eigen=n_eigen, prefix=f"{exp['arch']}|{exp['dataset']}|{exp['epoch']}_{exp['seed']}_{n_ntk_data}")
+    if not isfile(join("eigen", "eigvals_"+filename + ".npy")):                     # Don't recalculate 
+        model = model_dict[exp['arch']](**model_params[exp['arch']])
+        # Load checkpoint
+        rng = jax.random.PRNGKey(10) # Doesn't matter
+        params = model.init(rng, jnp.ones(dataset_dims[exp['dataset']]))['params']
+        state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+        init_variables_state_dict = jnp.load(f"{root}/{f}", allow_pickle=True)[()]
+        loaded_params = from_state_dict(params, init_variables_state_dict )
+        # Load dataset
+        if ntk_ds is None or exp['dataset'] != current_dataset: # Loading a subset of dataset is slow
+            current_dataset = exp['dataset']
+            print("Loading datasets...")
+            train_ds, _ = get_datasets(exp['dataset'])
+            ds, *_ = train_ds['image'].shape
+            print("Creating NTK testing dataset...")
+            key = jax.random.PRNGKey(128)
+            index = jax.random.choice(key, ds, (n_ntk_data,), replace=False) 
+            index = list(index)
+            ntk_ds = train_ds['image'][index, ...]  
+        # Calculate Empirical NTK
+        print(f"Calculating NTK for {exp['arch']}-{exp['dataset']} using {n_ntk_data} data points for epoch {exp['epoch']}")
+        ntk_matrix = calculate_ntk_matrix(model, ntk_ds, loaded_params)
+        # Calculate Eigenvals and Vectors for NTK Matrix
+        handle_eigendata(ntk_matrix, top_k_eigen=n_eigen, prefix=filename)
+    else:
+        print(f"Skipping file: {f}")
   
