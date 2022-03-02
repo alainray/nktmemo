@@ -77,7 +77,7 @@ for f in files:
         rng = jax.random.PRNGKey(10) # Doesn't matter
         params = model.init(rng, jnp.ones(dataset_dims[exp['dataset']]))['params']
         state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
-        init_variables_state_dict = jnp.load(f"{root}/{f}", allow_pickle=True)[()]
+        init_variables_state_dict = np.load(f"{root}/{f}", allow_pickle=True)[()]
         loaded_params = from_state_dict(params, init_variables_state_dict )
         # Load dataset
         if ntk_ds is None or exp['dataset'] != current_dataset: # Loading a subset of dataset is slow
